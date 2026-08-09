@@ -1,0 +1,24 @@
+{
+  "fuente": "https://github.com/hasaneyldrm/exercises-dataset",
+  "licencia_datos": "MIT (estructura, tooling e instrucciones)",
+  "licencia_media": "© Gym visual — redistribuido con permiso, atribución obligatoria",
+  "base_media": "https://raw.githubusercontent.com/hasaneyldrm/exercises-dataset/main",
+  "curado_el": "2026-08-09",
+  "total": 1324,
+  "con_instrucciones_es": 1324,
+  "por_patron": {
+    "core": 178,
+    "movilidad": 61,
+    "traccion_vertical": 57,
+    "empuje_horizontal": 147,
+    "aislamiento": 538,
+    "cardio": 25,
+    "bisagra": 51,
+    "zancada": 38,
+    "traccion_horizontal": 118,
+    "empuje_vertical": 36,
+    "sentadilla": 74,
+    "transporte": 1
+  },
+  "nota": "El patrón de movimiento y el nombre en español los agrega scripts/curar-dataset.mjs. No vienen en el dataset original."
+}

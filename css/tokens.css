@@ -1,0 +1,105 @@
+/**
+ * tokens.css — Grafito y brasa.
+ *
+ * Tres colores y neutros, como manda el checklist de diseño:
+ *   grafito  el fondo y toda la estructura
+ *   brasa    un solo acento cálido. Aparece únicamente donde hay una decisión tuya
+ *   frío     un azul apagado, solo para el modo recuperación
+ *
+ * La jerarquía la hace el TAMAÑO y el ESPACIO, no las cajas. No hay tarjetas con
+ * borde, no hay sombras, no hay degradados. Cada pantalla tiene un solo elemento
+ * grande y el resto en gris.
+ *
+ * Tipografía: pila del sistema. No se cargan fuentes remotas a propósito —
+ * una fuente de Google es una petición de red que falla justo el día que estás
+ * en el gimnasio sin señal, y deja la app con la tipografía de reserva y todo
+ * el ritmo vertical roto.
+ */
+
+:root {
+  /* ── Grafito ─────────────────────────────────────────────────────────── */
+  --fondo: #0A0A0B;
+  --fondo-elevado: #141416;
+  --fondo-hundido: #060607;
+  --linea: #232326;
+  --linea-fuerte: #33333a;
+
+  /* Texto. Los tres niveles pasan 4.5:1 sobre --fondo; el cuarto es solo
+     para elementos grandes, donde el mínimo es 3:1. */
+  --texto: #F4F4F5;        /* 18.9:1 */
+  --texto-2: #A9A9B2;      /*  8.0:1 */
+  --texto-3: #7C7C86;      /*  4.7:1 */
+  --texto-tenue: #55555E;  /*  2.6:1 — solo texto ≥24px o elementos decorativos */
+
+  /* ── Brasa: el único acento ──────────────────────────────────────────── */
+  --brasa: #E8833A;        /*  7.9:1 sobre el fondo */
+  --brasa-viva: #FF9A4D;
+  --brasa-sobre: #0A0A0B;  /* texto sobre un fondo brasa */
+  --brasa-tenue: rgba(232, 131, 58, 0.12);
+
+  /* ── Frío: solo modo recuperación ────────────────────────────────────── */
+  --frio: #7FA3C4;
+  --frio-tenue: rgba(127, 163, 196, 0.12);
+
+  /* ── Alerta: solo dolor y borrado ────────────────────────────────────── */
+  --alerta: #D9705F;
+
+  /* ── Tipografía ──────────────────────────────────────────────────────── */
+  --fuente: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  --fuente-num: ui-monospace, 'SF Mono', 'Cascadia Mono', 'Roboto Mono', monospace;
+
+  --t-cifra: clamp(4.5rem, 22vw, 7rem);
+  --t-titulo: clamp(1.75rem, 7vw, 2.5rem);
+  --t-sub: 1.125rem;
+  --t-base: 1rem;
+  --t-chico: 0.875rem;
+  --t-micro: 0.75rem;
+
+  --peso-fino: 300;
+  --peso-normal: 400;
+  --peso-medio: 500;
+  --peso-fuerte: 650;
+
+  /* ── Espacio. Escala espaciosa (dial de densidad 3/10). ──────────────── */
+  --e1: 0.5rem;
+  --e2: 0.875rem;
+  --e3: 1.25rem;
+  --e4: 2rem;
+  --e5: 3rem;
+  --e6: 4.5rem;
+
+  --ancho: 34rem;
+  --radio: 12px;
+  --radio-chico: 8px;
+
+  /* Toque: mínimo 44×44 en todo lo que se pueda tocar. */
+  --toque: 48px;
+
+  --transicion: 200ms cubic-bezier(0.2, 0, 0, 1);
+  --transicion-lenta: 320ms cubic-bezier(0.2, 0, 0, 1);
+
+  --seguro-arriba: env(safe-area-inset-top, 0px);
+  --seguro-abajo: env(safe-area-inset-bottom, 0px);
+}
+
+/* La app es oscura por diseño, no por preferencia del sistema: es una app que se
+   abre en un gimnasio y a las 6 de la mañana. Pero si alguien fuerza tema claro
+   en el sistema operativo, al menos no se rompe el contraste. */
+@media (prefers-color-scheme: light) {
+  :root {
+    --fondo: #0A0A0B; /* se mantiene: la decisión es del producto, no del sistema */
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --transicion: 1ms;
+    --transicion-lenta: 1ms;
+  }
+  *, *::before, *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+}
