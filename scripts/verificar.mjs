@@ -51,7 +51,7 @@ console.log('\n── 1. Módulos ───────────────�
 const MODULOS = [
   'js/dominio/modelo.js', 'js/dominio/motor.js', 'js/dominio/progresion.js',
   'js/dominio/bandit.js', 'js/dominio/adherencia.js', 'js/dominio/catalogo.js',
-  'js/dominio/mensajes.js',
+  'js/dominio/mensajes.js', 'js/dominio/pedido.js',
 ];
 const M = {};
 for (const ruta of MODULOS) {
@@ -65,15 +65,17 @@ const progresion = M['js/dominio/progresion.js'];
 const bandit = M['js/dominio/bandit.js'];
 const adherencia = M['js/dominio/adherencia.js'];
 const catalogo = M['js/dominio/catalogo.js'];
+const pedido = M['js/dominio/pedido.js'];
 
 // Los módulos de UI y de red importan APIs del navegador en tiempo de ejecución,
 // pero su nivel superior tiene que ser importable igual. Si un `document` se
 // ejecuta al importar, esto lo caza.
 globalThis.navigator ||= { onLine: false };
 globalThis.indexedDB ||= { open: () => ({}) };
+let clienteIA = null;
 for (const ruta of ['js/ia/cliente.js']) {
   // eslint-disable-next-line no-await-in-loop
-  await import(pathToFileURL(resolve(RAIZ, ruta)).href);
+  clienteIA = await import(pathToFileURL(resolve(RAIZ, ruta)).href);
   comprobar(`importa ${ruta}`, () => true);
 }
 
@@ -396,6 +398,256 @@ comprobar('toda señal trae una propuesta accionable', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+console.log('\n── 7b. v2: negociar, calentar, sustituir, armar ────────────');
+
+const checkBueno = { sueno: 4, energia: 4, animo: 4, dolor: {}, minutos: 60 };
+
+comprobar('la entrada en calor deja de estar vacía', () => {
+  const p = motor.decidir({ ...obsBase, check: checkBueno });
+  verdadero(p.calentamiento.length >= 2, `trajo ${p.calentamiento.length} movimientos`);
+  verdadero(p.calentamiento.every((c) => c.ejercicio?.n && c.segundos > 0), 'un movimiento sin nombre o sin duración');
+  // Nadie sostiene un estiramiento de tres minutos. La primera versión repartía
+  // los 8 minutos entre 3 movimientos y daba 165 segundos cada uno.
+  verdadero(p.calentamiento.every((c) => c.segundos <= 90), `un movimiento de ${Math.max(...p.calentamiento.map((c) => c.segundos))}s`);
+  return `${p.calentamiento.length} movimientos de ${p.calentamiento[0].segundos}s · ${p.calentamiento.map((c) => c.zona).join(', ')}`;
+});
+
+comprobar('hay entrada en calor aunque no se marque peso corporal', () => {
+  // Encontrado probando la app en el navegador: los 61 movimientos de movilidad
+  // son de peso corporal, bandas o accesorios. Filtrando por el equipo del día,
+  // marcar solo "barra y mancuernas" devolvía el hueco en blanco de la v1.
+  const p = motor.decidir({
+    ...obsBase,
+    perfil: { ...perfilBase, equipo: ['barra', 'mancuernas'] },
+    check: { ...checkBueno, equipoHoy: ['barra', 'mancuernas'] },
+  });
+  verdadero(p.calentamiento.length >= 2, `trajo ${p.calentamiento.length} movimientos`);
+  return `${p.calentamiento.length} movimientos sin marcar peso corporal`;
+});
+
+comprobar('el calentamiento apunta a las zonas que la sesión carga', () => {
+  const p = motor.decidir({ ...obsBase, check: checkBueno });
+  // La sesión 0 arranca con sentadilla: tiene que calentar piernas o gemelos.
+  const zonas = p.calentamiento.map((c) => c.zona);
+  verdadero(zonas.some((z) => z === 'piernas' || z === 'gemelos'),
+    `calentó ${zonas.join(', ')} para una sesión que arranca en sentadilla`);
+  return zonas.join(', ');
+});
+
+comprobar('la misma observación da SIEMPRE la misma sesión', () => {
+  const a = motor.decidir({ ...obsBase, check: checkBueno });
+  const b = motor.decidir({ ...obsBase, check: checkBueno });
+  igual(a.bloques.map((x) => x.ejercicio.id).join(), b.bloques.map((x) => x.ejercicio.id).join());
+  return 'el motor sigue siendo reproducible';
+});
+
+comprobar('pedir otra propuesta cambia la sesión', () => {
+  const a = motor.decidir({ ...obsBase, check: checkBueno, intento: 0 });
+  let distinto = false;
+  // Se prueban varios intentos: el podio está pesado 60/25/15, así que un
+  // intento puntual puede repetir el mismo ejercicio sin que eso sea un bug.
+  for (let i = 1; i <= 4; i++) {
+    const b = motor.decidir({ ...obsBase, check: checkBueno, intento: i });
+    if (a.bloques.map((x) => x.ejercicio.id).join() !== b.bloques.map((x) => x.ejercicio.id).join()) {
+      distinto = true; break;
+    }
+  }
+  verdadero(distinto, 'cuatro intentos seguidos dieron exactamente la misma sesión');
+});
+
+comprobar('pedir un patrón lo mete en la sesión', () => {
+  const p = motor.decidir({
+    ...obsBase, check: checkBueno,
+    restricciones: { patronPreferido: 'traccion_vertical' },
+  });
+  verdadero(p.bloques.some((b) => b.patron === 'traccion_vertical'), 'no entró el patrón pedido');
+  verdadero(p.porQue.some((t) => t.toLowerCase().includes('pediste')), 'no dijo que lo metió porque se lo pidieron');
+});
+
+comprobar('el patrón pedido SOBREVIVE al recorte por tiempo', () => {
+  // Encontrado probando en el navegador: "quiero espalda y tengo 30 minutos"
+  // contestaba "meto tracción horizontal" y después el recorte, que muerde
+  // desde el final, la sacaba. El usuario pedía una cosa y recibía otra.
+  const p = motor.decidir({
+    ...obsBase, check: { ...checkBueno, minutos: 30 },
+    restricciones: { patronPreferido: 'traccion_horizontal', minutos: 30 },
+  });
+  verdadero(p.bloques.some((b) => b.patron === 'traccion_horizontal'),
+    `quedaron ${p.bloques.map((b) => b.patron).join(', ')} en ${p.minutosEstimados} min`);
+  return `${p.bloques.length} bloques en ${p.minutosEstimados} min, con lo pedido adentro`;
+});
+
+comprobar('pedir sacar un patrón lo saca y lo explica', () => {
+  const p = motor.decidir({
+    ...obsBase, check: checkBueno,
+    restricciones: { excluirPatrones: ['empuje_horizontal'] },
+  });
+  igual(p.bloques.filter((b) => b.patron === 'empuje_horizontal').length, 0);
+  verdadero(p.porQue.some((t) => t.includes('porque me lo pediste')), 'lo sacó sin decir por qué');
+});
+
+comprobar('la restricción de minutos manda sobre el check', () => {
+  const p = motor.decidir({
+    ...obsBase, check: { ...checkBueno, minutos: 90 },
+    restricciones: { minutos: 25 },
+  });
+  verdadero(p.minutosEstimados <= 28, `estimó ${p.minutosEstimados} para 25 pedidos`);
+  return `${p.minutosEstimados} min`;
+});
+
+comprobar('sustituir ofrece alternativas del mismo patrón y mismo equipo', () => {
+  const p = motor.decidir({ ...obsBase, check: checkBueno });
+  const b = p.bloques[0];
+  const alt = motor.alternativas(b, { equipoDisponible: perfilBase.equipo });
+  verdadero(alt.length > 0, 'no ofreció ninguna alternativa');
+  verdadero(alt.every((e) => e.p === b.patron), 'coló un ejercicio de otro patrón');
+  verdadero(alt.every((e) => e.id !== b.ejercicio.id), 'ofreció el mismo ejercicio que ya estaba');
+  verdadero(alt.every((e) => perfilBase.equipo.includes(e.g)), 'ofreció equipo que no hay');
+  return `${alt.length} alternativas para ${b.ejercicio.n}`;
+});
+
+comprobar('al sustituir, la carga se recalcula con el historial del ejercicio NUEVO', () => {
+  const p = motor.decidir({ ...obsBase, check: checkBueno });
+  const b = p.bloques[0];
+  const otro = motor.alternativas(b, { equipoDisponible: perfilBase.equipo })[0];
+  // El ejercicio nuevo nunca se hizo: no puede heredar la carga del anterior.
+  const nuevo = motor.sustituir(b, otro, { historial: {}, vecesHecho: new Map() });
+  igual(nuevo.carga, null, 'arrastró una carga de un ejercicio que nunca se hizo');
+  igual(nuevo.hueco, b.hueco);
+  igual(nuevo.rol, b.rol);
+});
+
+comprobar('la sesión manual la prescribe el motor, no el usuario', () => {
+  const dos = indice.filter((e) => e.p === 'empuje_horizontal' && e.g === 'barra').slice(0, 2);
+  const p = motor.armarManual({
+    ejercicioIds: dos.map((e) => e.id),
+    perfil: perfilBase, check: { minutos: 45 }, hoy: '2026-08-11',
+  });
+  igual(p.origen, 'manual');
+  igual(p.bloques.length, 2);
+  verdadero(p.bloques.every((b) => b.series > 0 && b.repsObjetivo.length === 2),
+    'un bloque manual quedó sin series ni repeticiones prescritas');
+  return `${p.bloques.length} bloques, ${p.minutosEstimados} min`;
+});
+
+comprobar('la sesión manual desbalanceada se dice, no se corrige', () => {
+  const empujes = indice.filter((e) => e.p === 'empuje_horizontal').slice(0, 3);
+  const p = motor.armarManual({
+    ejercicioIds: empujes.map((e) => e.id),
+    perfil: perfilBase, check: {}, hoy: '2026-08-11',
+  });
+  igual(p.bloques.length, 3, 'corrigió la sesión en vez de respetarla');
+  verdadero(p.porQue.some((t) => t.includes('ninguna tracción')), 'no marcó el desbalance');
+  return p.porQue[1];
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+console.log('\n── 7c. Entender el pedido, sin red ─────────────────────────');
+
+comprobar('"hoy quiero espalda y tengo 40 minutos"', () => {
+  const r = pedido.interpretar('hoy quiero espalda y tengo 40 minutos');
+  igual(r.patronPreferido, 'traccion_horizontal');
+  igual(r.minutos, 40);
+});
+
+comprobar('"media hora, sin dominadas"', () => {
+  const r = pedido.interpretar('media hora, sin dominadas');
+  igual(r.minutos, 30);
+  verdadero(r.excluirPatrones.includes('traccion_vertical'), `excluyó ${r.excluirPatrones.join()}`);
+});
+
+comprobar('"me duele el hombro" bloquea los dos empujes', () => {
+  const r = pedido.interpretar('me duele el hombro');
+  verdadero(r.excluirPatrones.includes('empuje_vertical') && r.excluirPatrones.includes('empuje_horizontal'),
+    `excluyó ${r.excluirPatrones.join()}`);
+});
+
+comprobar('pedir y excluir lo mismo: gana la exclusión', () => {
+  const r = pedido.interpretar('quiero pecho pero me duele el hombro');
+  igual(r.patronPreferido, null);
+  verdadero(r.excluirPatrones.includes('empuje_horizontal'));
+});
+
+comprobar('una frase que no es un pedido no inventa restricciones', () => {
+  const r = pedido.interpretar('¿por qué me duele después de entrenar?');
+  igual(r.patronPreferido, null);
+  igual(r.minutos, null);
+});
+
+comprobar('lo que se entendió se le cuenta al usuario', () => {
+  const r = pedido.interpretar('espalda, 40 minutos');
+  const t = pedido.describir(r, (p) => modelo.PATRON[p].nombre);
+  verdadero(t.includes('40 minutos') && t.toLowerCase().includes('tracción'), t);
+  return t;
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+console.log('\n── 7d. Buscador ────────────────────────────────────────────');
+
+comprobar('"press banca" encuentra el press de banca', () => {
+  const r = catalogo.buscar('press banca', { limite: 10 });
+  verdadero(r.length > 0, 'no encontró nada');
+  verdadero(/press/i.test(r[0].n) && /banca/i.test(r[0].n), `el primero fue "${r[0].n}"`);
+  return `${r.length} resultados · primero: ${r[0].n}`;
+});
+
+comprobar('la búsqueda por palabras sueltas funciona en cualquier orden', () => {
+  const a = catalogo.buscar('banca press', { limite: 5 });
+  verdadero(a.length > 0 && /press/i.test(a[0].n), `dio "${a[0]?.n}"`);
+});
+
+comprobar('el resultado está ORDENADO por puntaje, no por posición en el archivo', () => {
+  const r = catalogo.buscar('sentadilla', { limite: 20 });
+  // El nombre que empieza con la consulta tiene que estar antes que uno que la
+  // menciona en el medio. Esto es exactamente lo que la v1 no hacía.
+  verdadero(r[0].n.toLowerCase().startsWith('sentadilla'), `el primero fue "${r[0].n}"`);
+  igual(r[0].c, 1, `el primero fue "${r[0].n}", que no es compuesto`);
+  // Y el movimiento canónico tiene que ganarle a la variante exótica.
+  const pos = (nombre) => r.findIndex((e) => e.n.toLowerCase().includes(nombre));
+  const sissy = pos('sissy');
+  verdadero(sissy < 0 || sissy > 2, `la sentadilla sissy salió en la posición ${sissy + 1}`);
+  return r.slice(0, 3).map((e) => e.n).join(' · ');
+});
+
+comprobar('el filtro de equipo no deja pasar nada de otro equipo', () => {
+  const r = catalogo.buscar('', { limite: 40, equipo: ['peso_corporal'] });
+  verdadero(r.length > 0);
+  igual(r.filter((e) => e.g !== 'peso_corporal').length, 0);
+});
+
+comprobar('el filtro de patrón y el de zona se combinan', () => {
+  const r = catalogo.buscar('', { limite: 40, patron: 'sentadilla', zona: 'piernas' });
+  verdadero(r.length > 0, 'no quedó nada al combinar los dos filtros');
+  igual(r.filter((e) => e.p !== 'sentadilla' || e.z !== 'piernas').length, 0);
+});
+
+comprobar('una consulta sin resultados devuelve vacío, no el catálogo entero', () => {
+  igual(catalogo.buscar('zzzzqqq', { limite: 40 }).length, 0);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+console.log('\n── 7e. La IA no puede inventar números ─────────────────────');
+
+comprobar('detecta un peso que no está en los datos', () => {
+  const plan = motor.decidir({ ...obsBase, check: checkBueno });
+  const permitidas = clienteIA.cifrasPermitidas(plan, {});
+  const malas = clienteIA.cifrasInventadas('Venís levantando 137 kg en sentadilla.', permitidas);
+  verdadero(malas.includes('137'), `no marcó el 137; marcó ${malas.join()}`);
+});
+
+comprobar('no marca las cifras que SÍ están en el plan', () => {
+  const plan = motor.decidir({ ...obsBase, check: checkBueno });
+  const permitidas = clienteIA.cifrasPermitidas(plan, { adherencia: 72 });
+  const texto = `Disposición ${plan.disposicion}, ${plan.minutosEstimados} minutos, adherencia 72%.`;
+  igual(clienteIA.cifrasInventadas(texto, permitidas).length, 0);
+});
+
+comprobar('no marca repeticiones ni series (evita el falso positivo)', () => {
+  const permitidas = new Set(['3', '8']);
+  igual(clienteIA.cifrasInventadas('Hacé 3 series de 8 con 2 en reserva.', permitidas).length, 0);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 console.log('\n── 8. Service worker y archivos ────────────────────────────');
 
 const sw = leer('sw.js');
@@ -513,6 +765,44 @@ comprobar('todo elemento que el JS oculta con `hidden` tiene su regla en CSS', (
   }
   igual(faltan.length, 0, `falta la regla [hidden] para: ${faltan.join(', ')}`);
   return `${ocultados.size} elemento(s) revisado(s)`;
+});
+
+comprobar('todo import nombrado existe en el módulo que lo exporta', () => {
+  // Los módulos de UI no se pueden importar en Node (tocan `document` al usarse),
+  // así que un export mal escrito ahí no lo caza ningún otro chequeo: aparece
+  // como pantalla en blanco recién en el teléfono. Esto lo lee del texto.
+  const exportsDe = (txt) => {
+    const s = new Set();
+    // `[\p{L}...]` y no `\w`: hay exports con eñe (`señal`) y `\w` es ASCII,
+    // así que con `\w` este chequeo inventaba dos fallos que no existían.
+    for (const m of txt.matchAll(/export\s+(?:async\s+)?(?:function|const|let|var|class)\s+([\p{L}\p{N}_$]+)/gu)) s.add(m[1]);
+    for (const m of txt.matchAll(/export\s*\{([^}]+)\}/g)) {
+      for (const parte of m[1].split(',')) {
+        const nombre = parte.trim().split(/\s+as\s+/).pop().trim();
+        if (nombre) s.add(nombre);
+      }
+    }
+    if (/export\s+default/.test(txt)) s.add('default');
+    return s;
+  };
+
+  const rotos = [];
+  for (const f of archivosReales('js', '.js')) {
+    const txt = leer(f);
+    for (const m of txt.matchAll(/import\s*\{([^}]+)\}\s*from\s*'([^']+)'/g)) {
+      const destino = resolve(RAIZ, dirname(f), m[2]);
+      if (!existsSync(destino)) { rotos.push(`${f} → ${m[2]} (no existe)`); continue; }
+      const disponibles = exportsDe(readFileSync(destino, 'utf8'));
+      for (const parte of m[1].split(',')) {
+        const nombre = parte.trim().split(/\s+as\s+/)[0].trim();
+        if (nombre && !disponibles.has(nombre)) {
+          rotos.push(`${f} importa "${nombre}" de ${relative(RAIZ, destino).replace(/\\/g, '/')}`);
+        }
+      }
+    }
+  }
+  igual(rotos.length, 0, rotos.join(' · '));
+  return `${archivosReales('js', '.js').length} módulos revisados`;
 });
 
 comprobar('la versión del caché del SW está declarada', () => {

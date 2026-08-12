@@ -16,7 +16,7 @@
  * y proyectar eso toma milisegundos. Si algún día molesta, se agregan snapshots.
  */
 
-export const VERSION_ESQUEMA = 1;
+export const VERSION_ESQUEMA = 2;
 
 export const EVENTO = {
   PERFIL_DEFINIDO: 'perfil.definido',
@@ -29,6 +29,26 @@ export const EVENTO = {
   HABITO_REGISTRADO: 'habito.registrado',
   NOTA_ESCRITA: 'nota.escrita',
   AJUSTE_CAMBIADO: 'ajuste.cambiado',
+  // ── v2 ────────────────────────────────────────────────────────────────────
+  // Arrepentirse tiene que ser un evento, no un borrado. La v1 no tenía ninguno
+  // de estos y por eso el día quedaba decidido hasta las 00:00: la única salida
+  // era registrar un fallo o borrar el historial entero.
+  SESION_DESCARTADA: 'sesion.descartada',
+  BLOQUE_SUSTITUIDO: 'bloque.sustituido',
+  BLOQUE_AGREGADO: 'bloque.agregado',
+  COACH_TURNO: 'coach.turno',
+};
+
+/**
+ * Descanso sugerido entre series, en segundos, por rol. No es decoración: 90
+ * segundos y 3 minutos entrenan cosas distintas. Un compuesto pesado necesita
+ * que el sistema nervioso se recupere; un accesorio, no.
+ */
+export const DESCANSO_POR_ROL = {
+  compuesto_pesado: 180,
+  compuesto: 120,
+  accesorio: 60,
+  core: 45,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -14,7 +14,7 @@
  *                              mira más de 40 ejercicios distintos por mes.
  */
 
-const CACHE = 'norte-v1';
+const CACHE = 'norte-v2';
 const CACHE_MEDIA = 'norte-media-v1';
 const TOPE_MEDIA = 120; // ~15 MB de GIFs. Suficiente para varios meses de sesiones.
 
@@ -34,8 +34,10 @@ const PRECARGA = [
   './js/dominio/adherencia.js',
   './js/dominio/catalogo.js',
   './js/dominio/mensajes.js',
+  './js/dominio/pedido.js',
   './js/ia/cliente.js',
   './js/ui/componentes.js',
+  './js/ui/coach.js',
   './js/ui/inicio.js',
   './js/ui/hoy.js',
   './js/ui/sesion.js',

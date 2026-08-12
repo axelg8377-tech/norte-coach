@@ -10,8 +10,17 @@ verticales, ni App Check, ni Rules.
 node scripts/verificar.mjs
 ```
 
-59 comprobaciones. Tiene que dar verde **antes y después** de cualquier cambio. Si algo se
+90 comprobaciones. Tiene que dar verde **antes y después** de cualquier cambio. Si algo se
 rompe y el arnés sigue en verde, falta un chequeo: agregarlo en el mismo commit que el fix.
+
+**Y después probala en el navegador.** El arnés prueba que el motor decide bien, no que el
+producto se pueda usar. En la v2, tres bugs reales aparecieron en los primeros cinco minutos de
+uso con el arnés entero en verde (están listados en `docs/DECISIONES.md`). Servir la carpeta y
+hacer el flujo completo cuesta dos minutos:
+
+```bash
+python -m http.server 8899   # y abrir http://localhost:8899
+```
 
 ## Reglas que ya se pagaron
 
@@ -36,9 +45,25 @@ una observación y devuelve la sesión del día. Por qué: `docs/DECISIONES.md` 
 
 ## Lo que no se hace
 
-No sincronización, no editor de rutinas a mano, no gamificación, no compartir en redes.
-Cada uno con su motivo y su condición de reapertura en `docs/DECISIONES.md` y
-`docs/ROADMAP.md`. Si vas a proponer alguno, leé primero por qué se descartó.
+No sincronización, no gamificación, no compartir en redes. Cada uno con su motivo y su condición
+de reapertura en `docs/DECISIONES.md` y `docs/ROADMAP.md`. Si vas a proponer alguno, leé primero
+por qué se descartó.
+
+**El editor de rutinas a mano salió de esta lista el 2026-08-11** (D-12), reabierto por Axel
+después de usar la v1. Se reabrió acotado: elegís los ejercicios, el motor sigue prescribiendo
+series, repeticiones y carga, y escribe el desbalance. Las sesiones manuales llevan
+`origen: 'manual'` para poder compararlas contra las del motor a las 20 sesiones.
+
+## Reglas nuevas de la v2
+
+7. **Arrepentirse es un evento, nunca un borrado.** `sesion.descartada` saca la sesión de las
+   proyecciones sin sacarla del log.
+8. **El motor sortea, pero con semilla.** `azarSembrado(dia|sesionesHechas|intento)`. Nunca
+   `Math.random()` en `decidir()`: la sesión mutaría al repintar y el arnés dejaría de servir.
+9. **Negociar la sesión no puede depender de la red.** `dominio/pedido.js` traduce la frase a
+   restricciones sin IA; la IA solo entra si esa tabla no entendió nada.
+10. **La IA no puede citar un número que no esté en el plan.** `cifrasInventadas()` lo verifica
+    antes de pintar el texto.
 
 ## Deploy
 

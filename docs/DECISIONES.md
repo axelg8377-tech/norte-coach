@@ -160,3 +160,81 @@ la hace el tamaño y el espacio, no las cajas: no hay tarjetas, ni sombras, ni d
 **No se cargan fuentes remotas.** Una fuente de Google es una petición de red que falla
 justo el día que estás en el gimnasio sin señal, y deja todo el ritmo vertical roto. Se
 usa la pila del sistema, y el arnés verifica que no entre ningún recurso remoto al HTML.
+
+---
+
+# v2 — 2026-08-11
+
+Axel usó la v1 en un gimnasio real. El veredicto fue duro y específico: no deja reiniciar una
+sesión, armar la rutina es malísimo, el coach no toma protagonismo, el buscador es pobre, el
+progreso no se entiende. Estas cuatro decisiones son la respuesta.
+
+## D-09 · El día deja de ser inmutable, y arrepentirse es un evento
+
+La v1 no tenía forma de deshacer. Emitido `sesion.propuesta`, la pantalla de hoy entraba a la
+propuesta hasta las 00:00; las únicas salidas eran registrar un fallo con "Hoy no puedo" o
+borrar el historial entero desde Ajustes.
+
+**Decisión:** tres eventos nuevos — `sesion.descartada`, `bloque.sustituido`, `bloque.agregado` —
+y ninguno borra nada. Una sesión descartada queda en el log (se puede auditar cuántas veces se
+pidió otra propuesta) pero sale de `listaSesiones`, así que no cuenta como intento, no alimenta
+al bandit y no toca la adherencia.
+
+**Por qué así y no borrando el evento:** el log append-only es lo que permite que una métrica
+futura lea el pasado (D-04). Un borrado destruye eso para ahorrar una línea de proyección.
+
+## D-10 · El motor deja de ser determinista, pero sigue siendo reproducible
+
+`opciones[0]`, siempre. Dos días con el mismo check daban exactamente la misma sesión.
+
+**Decisión:** se sortea entre los tres primeros candidatos con peso 60/25/15, usando un azar
+**sembrado** con `dia|sesionesHechas|intento`. La misma observación da siempre la misma sesión
+—el arnés sigue sirviendo y la pantalla no cambia sola al repintarse— y "otra propuesta" es
+simplemente otra semilla.
+
+**Descartado:** `Math.random()` directo. Habría hecho que la sesión mutara delante del usuario
+en cada render y que ningún escenario del arnés fuera estable.
+
+## D-11 · La negociación de la sesión es determinista; la IA solo amplía
+
+Se puede pedir "hoy quiero espalda y tengo 40 minutos" y el motor rearma la sesión. Esa
+traducción de frase a restricciones vive en `dominio/pedido.js`, que es una tabla de sinónimos
+sin red, sin clave y sin saldo. La IA solo entra cuando la tabla no entendió nada, y devuelve el
+mismo objeto.
+
+**Por qué:** negociar la sesión es la función central de la v2, y una función central no puede
+depender de que haya internet en el subsuelo de un gimnasio. Es la misma regla que D-07, aplicada
+a algo más importante que un párrafo.
+
+**Consecuencia que se aceptó:** el vocabulario es limitado y hay que mantenerlo a mano. A cambio,
+la app negocia igual en modo avión.
+
+## D-12 · El armado manual se reabre, acotado y medido
+
+La v1 lo prohibía: si se puede armar la sesión a mano, el motor sobra y la app vuelve a ser una
+planilla con animaciones. El motivo era bueno y Axel lo reabrió igual, después de usarla.
+
+**Cómo se reabre sin matar al motor:** vos elegís QUÉ; el motor sigue diciendo cuántas series,
+cuántas repeticiones y con cuánta carga según tu historial, y escribe el diagnóstico de lo que
+estás dejando afuera ("hay 3 empujes y ninguna tracción"). No corrige la sesión: la describe.
+
+**Cómo se cierra la discusión:** las sesiones manuales se guardan con `origen: 'manual'`. A las
+20 sesiones se comparan adherencia y equilibrio contra las del motor. Si las manuales salen peor
+en las dos, el dato decide. Si salen mejor, el que estaba equivocado era el motor.
+
+## Lo que se encontró probando en el navegador, no leyendo el código
+
+Tres bugs que el arnés no veía y que aparecieron al usar la app, cada uno con su chequeo nuevo:
+
+1. **Sin marcar "peso corporal" no había entrada en calor.** Los 61 movimientos de movilidad son
+   de peso corporal, bandas o accesorios; filtrando por el equipo del día, quien marca solo barra
+   y mancuernas volvía al hueco en blanco de la v1.
+2. **El calentamiento daba tres estiramientos de 165 segundos.** Repartía los 8 minutos entre 3
+   movimientos. Nadie sostiene eso: ahora son hasta 5 movimientos de 60 segundos y el resto queda
+   para la entrada general.
+3. **El patrón pedido era lo primero que se caía.** "Quiero espalda y tengo 30 minutos"
+   contestaba "meto tracción horizontal" y después el recorte por tiempo —que muerde desde el
+   final— la sacaba. Ahora el patrón pedido va segundo, detrás del compuesto pesado.
+
+La lección, que vale para las cuatro apps: un arnés de función pura prueba que el motor decide
+bien, no que el producto se pueda usar. Los tres salieron en los primeros cinco minutos de uso.

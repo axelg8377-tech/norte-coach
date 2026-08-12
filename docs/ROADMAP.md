@@ -159,3 +159,34 @@ explican.
 
 **Editor de rutinas a mano.** Si se puede armar la sesión a mano, el motor deja de tener
 sentido y el producto vuelve a ser una planilla con animaciones.
+
+---
+
+# Estado después de la v2 — 2026-08-11
+
+Construido y verificado (`node scripts/verificar.mjs`, 90 comprobaciones en verde) y probado a
+mano en el navegador:
+
+| Propuesta | Estado |
+|---|---|
+| P-01 · Entrada en calor específica | **Hecha.** Hasta 5 movimientos de movilidad de las zonas que la sesión carga |
+| P-02 · Temporizador de descanso | **Hecha.** Marca de tiempo absoluta, no `setTimeout`: apagar la pantalla no atrasa la cuenta |
+| P-04 · Sustituir un ejercicio | **Hecha.** Mismo patrón y mismo equipo; la carga se recalcula con el historial del ejercicio nuevo |
+| P-10 · La IA no contradice al motor | **Hecha.** `cifrasInventadas()` compara los números del texto contra el plan; si cita un peso que no existe, no se muestra |
+| P-03 · Que el esfuerzo percibido alimente al motor | **Pendiente.** Sigue siendo la próxima: el dato está en el log desde el día uno y todavía solo se guarda |
+
+Las de la ronda 2 y 3 (P-05 a P-09) siguen igual, con sus condiciones de entrada intactas.
+
+**Lo que la v2 agregó y no estaba en este roadmap**, porque salió de usar la app y no de
+pensarla: descartar y rehacer el día, negociar la sesión por escrito, memoria de conversación,
+coach durante la sesión, armado manual asistido, buscador con puntaje y filtros, y la pantalla
+de progreso reordenada por pregunta en vez de por métrica. El detalle de las 15 está en
+`MEJORAS-v2.md` y los porqués en `DECISIONES.md` D-09 a D-12.
+
+## Lo próximo
+
+1. **P-03**, que es la única de la ronda 1 que quedó afuera.
+2. **Usar la app dos semanas antes de construir nada más.** La v1 se hizo entera en un ciclo y
+   se probó después; eso produjo la lista de 15. No repetirlo.
+3. **A las 20 sesiones**, comparar adherencia y equilibrio entre las sesiones `origen: 'manual'`
+   y las del motor (D-12). Ese número decide si el armado manual se queda.

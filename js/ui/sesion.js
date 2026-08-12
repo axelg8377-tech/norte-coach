@@ -11,17 +11,36 @@
  *     registro no hay progresión ni coach.
  *   - Nunca se pierde nada: cada serie es un evento en cuanto se toca el botón.
  *     Si se cierra la app a mitad, al volver está todo.
+ *
+ * ─── v2 ─────────────────────────────────────────────────────────────────────
+ *   - Temporizador de descanso con MARCA DE TIEMPO ABSOLUTA. Con `setTimeout` a
+ *     secas, la cuenta se congela cuando se apaga la pantalla y el temporizador
+ *     miente. Uno que miente es peor que ninguno.
+ *   - Sustituir el ejercicio, que es lo que hace falta cuando la máquina está
+ *     ocupada. La v1 solo dejaba saltearlo, y saltear castiga el historial.
+ *   - Salida honesta: descartar la sesión sin que cuente como hecha. En la v1
+ *     "Terminar acá" con dos series entraba como sesión completa y ensuciaba
+ *     adherencia, bandit y progresión.
  */
 
 import { h, vaciar, cifra, encabezado, hoja } from './componentes.js';
 import * as estado from '../estado.js';
 import { urlGif } from '../dominio/catalogo.js';
+import { alternativas, sustituir } from '../dominio/motor.js';
+import { panelCoach } from './coach.js';
 
 let inicioMs = null;
+let descansoHasta = null;
+let reloj = null;
+
+function pararReloj() {
+  if (reloj) { clearInterval(reloj); reloj = null; }
+}
 
 export function render(cont, { ir }) {
   const p = estado.proyeccion();
   const s = p.sesionHoy;
+  pararReloj();
   vaciar(cont);
 
   if (!s?.plan) { ir('#/hoy'); return; }
@@ -61,6 +80,8 @@ export function render(cont, { ir }) {
   };
 
   cont.append(
+    descanso(activo),
+
     h('div.serie-actual',
       h('p.micro', activo.patronNombre),
       h('h1.titulo', { style: 'margin:var(--e2) 0 var(--e4)' }, activo.ejercicio.n),
@@ -93,10 +114,15 @@ export function render(cont, { ir }) {
             carga: valores.carga,
             rir: valores.rir,
           });
+          // El descanso arranca cuando termina la serie, no cuando se pinta la
+          // pantalla: se guarda el instante en que vence, no cuánto falta.
+          descansoHasta = Date.now() + (activo.descanso ?? 90) * 1000;
           render(cont, { ir });
         },
       }, 'Serie hecha'),
       h('button.boton.fantasma', { onClick: () => verDemo(activo) }, 'Cómo se hace'),
+      h('button.boton.fantasma', { onClick: () => cambiarEjercicio(cont, p, s, activo, ir) },
+        'Cambiar este ejercicio'),
       h('button.boton.plano', { onClick: () => saltarEjercicio(cont, s, activo, ir) },
         'Saltear este ejercicio')),
 
@@ -110,9 +136,49 @@ export function render(cont, { ir }) {
           h('span.chico', { style: n >= b.series ? 'color:var(--brasa)' : '' }, `${n}/${b.series}`));
       })),
 
-    h('div.acciones',
-      h('button.boton.plano', { onClick: () => cerrarAntes(cont, p, s, ir) }, 'Terminar acá')),
+    panelCoach({ p, plan: s.plan, bloqueActivo: activo }),
+
+    h('div.acciones.secundarias',
+      h('button.boton.plano', { onClick: () => cerrarAntes(cont, p, s, ir) }, 'Terminar acá'),
+      h('button.boton.plano', { onClick: () => descartar(cont, s, ir) }, 'Descartar la sesión')),
   );
+
+  // ── Temporizador ──────────────────────────────────────────────────────────
+  function descanso(bloque) {
+    const total = bloque.descanso ?? 90;
+    if (!descansoHasta) return null;
+    const restante = () => Math.max(0, Math.round((descansoHasta - Date.now()) / 1000));
+    if (!restante()) { descansoHasta = null; return null; }
+
+    const numero = h('span.numero', String(restante()));
+    const barra = h('span');
+    const caja = h('div.descanso',
+      h('div.entre',
+        h('span.micro', 'Descanso'),
+        h('button.enlace', {
+          onClick: () => { descansoHasta = null; pararReloj(); caja.remove(); },
+        }, 'Saltar')),
+      h('div.entre', numero, h('span.chico', `de ${total}s`)),
+      h('div.barra', barra));
+
+    const pintar = () => {
+      const r = restante();
+      numero.textContent = String(r);
+      barra.style.width = `${Math.max(0, (r / total) * 100)}%`;
+      if (r <= 0) {
+        pararReloj();
+        descansoHasta = null;
+        numero.textContent = 'listo';
+        caja.dataset.terminado = 'true';
+        navigator.vibrate?.(200);
+      }
+    };
+    pintar();
+    // Se recalcula contra Date.now() en cada tick, así que apagar la pantalla no
+    // atrasa la cuenta: al volver, el número ya es el correcto.
+    reloj = setInterval(pintar, 500);
+    return caja;
+  }
 }
 
 function verDemo(bloque) {
@@ -138,6 +204,35 @@ function verDemo(bloque) {
       ? h('ol.pasos', pasos.map((t) => h('li', h('span', t))))
       : h('p.chico', 'No hay instrucciones para este ejercicio.'));
   });
+}
+
+/**
+ * Sustituir el ejercicio del bloque activo. La prescripción se recalcula contra
+ * el historial del ejercicio NUEVO: arrastrar la carga del anterior sería la
+ * forma más rápida de sugerir una barbaridad.
+ */
+function cambiarEjercicio(cont, p, s, activo, ir) {
+  const equipoDisponible = p.checkHoy?.equipoHoy?.length ? p.checkHoy.equipoHoy : (p.perfil?.equipo || ['peso_corporal']);
+  const opciones = alternativas(activo, {
+    equipoDisponible,
+    vecesHecho: p.vecesHecho,
+    yaEnLaSesion: new Set(s.plan.bloques.map((b) => b.ejercicio.id)),
+  });
+
+  hoja((cerrar) => h('div',
+    h('h2.titulo', { style: 'font-size:var(--t-sub)' }, 'Cambiar el ejercicio'),
+    h('p.chico', { style: 'margin:var(--e2) 0 var(--e3)' },
+      `Mismo patrón (${activo.patronNombre.toLowerCase()}) y mismo equipo. Las series y las repeticiones no cambian; la carga se recalcula con tu historial del ejercicio nuevo.`),
+    opciones.length
+      ? h('div.lista-ej', opciones.map((e) => h('button', {
+        onClick: async () => {
+          const nuevo = sustituir(activo, e, { historial: p.historial, vecesHecho: p.vecesHecho });
+          await estado.sustituirBloque(s.sesionId, activo.hueco, nuevo);
+          cerrar();
+          render(cont, { ir });
+        },
+      }, h('span.n', e.n), h('span.d', [e.e, e.t].filter(Boolean).join(' · ')))))
+      : h('p.chico', 'No hay otra opción de ese patrón con el equipo de hoy.')));
 }
 
 function saltarEjercicio(cont, s, activo, ir) {
@@ -167,7 +262,36 @@ function cerrarAntes(cont, p, s, ir) {
       h('button.boton.fantasma', { onClick: cerrar }, 'Sigo'))));
 }
 
+/**
+ * Descartar: la sesión no pasó. No cuenta como hecha ni como fallada, no
+ * alimenta al bandit y no toca la adherencia. Las series ya registradas quedan
+ * en el log, pero colgadas de una sesión descartada, así que ninguna proyección
+ * las mira.
+ */
+function descartar(cont, s, ir) {
+  hoja((cerrar) => h('div',
+    h('h2.titulo', { style: 'font-size:var(--t-sub)' }, 'Descartar la sesión'),
+    h('p.chico', { style: 'margin:var(--e2) 0 var(--e4)' },
+      s.series.length
+        ? `Llevás ${s.series.length} series y se van a descartar con la sesión. No cuenta como hecha ni como fallada: es como si no hubiera pasado. Volvés a la propuesta del día.`
+        : 'No cuenta como hecha ni como fallada. Volvés a la propuesta del día.'),
+    h('div.pila',
+      h('button.boton.alerta', {
+        onClick: async () => {
+          await estado.descartarSesion(s.sesionId, 'descartada_en_curso');
+          pararReloj();
+          descansoHasta = null;
+          inicioMs = null;
+          cerrar();
+          ir('#/hoy');
+        },
+      }, 'Descartar'),
+      h('button.boton.fantasma', { onClick: cerrar }, 'Cancelar'))));
+}
+
 function final(cont, p, s, ir, parcial = false) {
+  pararReloj();
+  descansoHasta = null;
   vaciar(cont);
   const minutos = inicioMs ? Math.max(1, Math.round((Date.now() - inicioMs) / 60000)) : null;
   let percepcion = 3;

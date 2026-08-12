@@ -10,7 +10,7 @@ import { h, vaciar, encabezado, fichas, aviso, hoja } from './componentes.js';
 import * as estado from '../estado.js';
 import * as db from '../db.js';
 import { GRUPO_EQUIPO, diasEntre, diaLocal } from '../dominio/modelo.js';
-import { hayClave, guardarClave, probarClave, preguntar } from '../ia/cliente.js';
+import { hayClave, guardarClave, probarClave } from '../ia/cliente.js';
 import { meta } from '../dominio/catalogo.js';
 
 export function render(cont, { ir }) {
@@ -92,8 +92,13 @@ export function render(cont, { ir }) {
             estadoClave.textContent = `No funcionó (${e.message}). La app sigue andando igual.`;
           } finally { ev.currentTarget.disabled = false; }
         },
-      }, 'Probar y guardar'),
-      hayClave() ? h('button.boton.plano', { onClick: () => preguntarAlgo(p) }, 'Preguntarle algo al coach') : null),
+      }, 'Probar y guardar')),
+    // La conversación NO vive acá. En la v1 estaba en esta pantalla, a tres
+    // toques del arranque, y por eso el coach no existía: el producto se llama
+    // coach y su función central estaba escondida en la configuración.
+    h('p.chico', { style: 'color:var(--texto-3)' },
+      'Para hablar con el coach, escribile desde la pantalla de hoy o desde la sesión en curso. '
+      + 'Ahí tiene el plan del día a la vista y se acuerda de la conversación.'),
   );
 
   // ── Datos ─────────────────────────────────────────────────────────────────
@@ -175,27 +180,3 @@ function borrar(cont, ir) {
   });
 }
 
-function preguntarAlgo(p) {
-  hoja(() => {
-    const entrada = h('input.buscador', { placeholder: '¿Por qué me duele el hombro los lunes?', 'aria-label': 'Tu pregunta' });
-    const salida = h('div', { style: 'margin-top:var(--e3)' });
-    return h('div',
-      h('h2.titulo', { style: 'font-size:var(--t-sub);margin-bottom:var(--e3)' }, 'Preguntale al coach'),
-      entrada,
-      h('div.acciones', h('button.boton', {
-        onClick: async (ev) => {
-          const q = entrada.value.trim();
-          if (!q) return;
-          ev.currentTarget.disabled = true;
-          vaciar(salida); salida.append(h('p.chico', 'Pensando…'));
-          try {
-            const r = await preguntar(q, p);
-            vaciar(salida); salida.append(h('div.porque', h('p', r)));
-          } catch (e) {
-            vaciar(salida); salida.append(h('p.chico', `No se pudo: ${e.message}`));
-          } finally { ev.currentTarget.disabled = false; }
-        },
-      }, 'Preguntar')),
-      salida);
-  });
-}

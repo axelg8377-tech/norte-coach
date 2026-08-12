@@ -130,7 +130,120 @@ ${plan.porQue.join(' ')}
 
 Escribí lo que un entrenador que conoce estos datos le diría hoy y que la app todavía no dijo. Si hay una contradicción entre lo que hace y lo que busca, marcala.`;
 
-  return llamar(prompt);
+  const texto = await llamar(prompt);
+  const malas = cifrasInventadas(texto, cifrasPermitidas(plan, proy));
+  if (malas.length) throw new Error(`cifras_inventadas:${malas.join(',')}`);
+  return texto;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Guardia de cifras
+//
+// La regla 4 del encabezado prohíbe inventar números, y hasta la v2 nadie la
+// verificaba: el texto se pintaba tal cual venía. Un coach que dice "venís
+// levantando 80 kg" cuando levantás 60 es peor que no tener coach, porque el
+// resto de lo que dice deja de ser creíble.
+//
+// Se miran solo las cifras que se pueden confundir con un dato: kilos,
+// porcentajes y números grandes. Las chicas (repeticiones, series, una escala de
+// 1 a 5) se dejan pasar a propósito: marcarlas daría falsos positivos todo el
+// tiempo y un chequeo con falsos positivos se termina apagando.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function cifrasPermitidas(plan, proy = {}) {
+  const s = new Set();
+  const meter = (n) => { if (n != null && n !== '' && Number.isFinite(Number(n))) s.add(String(Number(n))); };
+
+  meter(plan?.disposicion);
+  meter(plan?.minutosEstimados);
+  for (const b of plan?.bloques || []) {
+    meter(b.series); meter(b.carga); meter(b.descanso);
+    for (const r of b.repsObjetivo || []) meter(r);
+  }
+  for (const c of plan?.calentamiento || []) meter(Math.round((c.segundos || 0) / 60));
+  meter(proy.adherencia);
+  meter(proy.racha?.actual);
+  meter(proy.racha?.mejor);
+  meter(proy.hechas?.length);
+  meter(proy.diasSinEntrenar);
+  meter(proy.checkHoy?.sueno); meter(proy.checkHoy?.energia); meter(proy.checkHoy?.animo);
+  meter(proy.mejorMarca?.desde); meter(proy.mejorMarca?.hasta); meter(proy.mejorMarca?.semanas);
+  for (const [patron, series] of Object.entries(proy.volumenSemanal || {})) { void patron; meter(series); }
+  return s;
+}
+
+export function cifrasInventadas(texto, permitidas) {
+  const halladas = new Set();
+  for (const m of String(texto).matchAll(/(\d+(?:[.,]\d+)?)\s*(kg|kilos|%)/gi)) {
+    halladas.add(m[1].replace(',', '.'));
+  }
+  for (const m of String(texto).matchAll(/(?<![\d.,%])(\d{2,})(?![\d.,]*\s*(?:seg|s\b))/g)) {
+    if (Number(m[1]) >= 15) halladas.add(m[1]);
+  }
+  return [...halladas].filter((n) => !permitidas.has(String(Number(n))));
+}
+
+/**
+ * Conversación con memoria. La v1 armaba cada prompt desde cero, así que el
+ * coach no recordaba lo que vos le habías dicho dos minutos antes. Los turnos
+ * viven en el log de eventos como todo lo demás.
+ *
+ * @param {string} pregunta
+ * @param {Object} ctx { proy, plan, bloqueActivo, historia:[{quien,texto}] }
+ */
+export async function conversar(pregunta, { proy = {}, plan = null, bloqueActivo = null, historia = [] } = {}) {
+  const turnos = historia.slice(-6)
+    .map((t) => `${t.quien === 'vos' ? 'Persona' : 'Vos (entrenador)'}: ${t.texto}`)
+    .join('\n');
+
+  const sesion = plan
+    ? `Sesión de hoy (${plan.modo}, ${plan.minutosEstimados} min):\n`
+      + plan.bloques.map((b) => `- ${b.ejercicio.n}: ${b.series}×${b.repsObjetivo.join('-')}${b.carga ? ` con ${b.carga} kg` : ''}`).join('\n')
+    : 'Todavía no hay sesión decidida para hoy.';
+
+  const enCurso = bloqueActivo
+    ? `\nAhora mismo está haciendo: ${bloqueActivo.ejercicio.n} (${bloqueActivo.patronNombre}), ${bloqueActivo.series}×${bloqueActivo.repsObjetivo.join('-')}${bloqueActivo.carga ? ` con ${bloqueActivo.carga} kg` : ''}. Está entre series, con el celular en la mano y sudado: contestá corto.`
+    : '';
+
+  const prompt = `${turnos ? `Conversación previa:\n${turnos}\n\n` : ''}Pregunta ahora: ${pregunta}
+
+${sesion}${enCurso}
+
+Contexto:
+- ${proy.hechas?.length ?? 0} sesiones registradas · adherencia ${proy.adherencia ?? 'sin datos'}%
+- Objetivo: ${proy.perfil?.objetivo ?? 'sin definir'} · entrena ${proy.perfil?.diasPorSemana ?? '?'} días por semana
+- Señales activas: ${(proy.senales || []).map((s) => s.texto).join(' · ') || 'ninguna'}
+
+Contestá con esos datos. Si necesitás información que no tenés, decilo en una línea.`;
+
+  return llamar(prompt, { temperatura: 0.5 });
+}
+
+/**
+ * Traduce una frase a restricciones para el motor. `dominio/pedido.js` ya lo
+ * hace sin red; esto se usa solo cuando esa tabla no entendió nada, y devuelve
+ * el mismo objeto. La IA nunca escribe la sesión: escribe el pedido.
+ */
+export async function interpretarPedido(texto) {
+  const prompt = `Convertí este pedido de entrenamiento en JSON y no escribas nada más:
+"${texto}"
+
+Formato exacto:
+{"patronPreferido": null, "excluirPatrones": [], "minutos": null}
+
+Valores válidos de patrón: empuje_horizontal, empuje_vertical, traccion_horizontal, traccion_vertical, sentadilla, bisagra, zancada, core, aislamiento.
+minutos: número entero o null. Si el pedido no dice nada de un campo, dejalo en null o en lista vacía.`;
+
+  const bruto = await llamar(prompt, { temperatura: 0 });
+  const json = bruto.match(/\{[\s\S]*\}/);
+  if (!json) throw new Error('respuesta_no_json');
+  const r = JSON.parse(json[0]);
+  return {
+    patronPreferido: r.patronPreferido || null,
+    excluirPatrones: Array.isArray(r.excluirPatrones) ? r.excluirPatrones : [],
+    minutos: Number.isFinite(Number(r.minutos)) ? Number(r.minutos) : null,
+    entendido: true,
+  };
 }
 
 /** Pregunta libre desde ajustes. El usuario escribe, el coach responde con contexto. */

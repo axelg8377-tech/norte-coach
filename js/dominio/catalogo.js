@@ -165,15 +165,95 @@ export function candidatos(f) {
   return lista;
 }
 
-/** Búsqueda por texto para el explorador del catálogo. */
-export function buscar(texto, limite = 40) {
-  const q = (texto || '').toLowerCase().trim();
-  if (!q) return (_indice || []).slice(0, limite);
-  const t = q.normalize('NFD').replace(/[̀-ͯ]/g, '');
-  const sinAcento = (s) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-  return (_indice || [])
-    .filter((e) => sinAcento(e.n).includes(t) || sinAcento(e.en).includes(t) || sinAcento(e.t).includes(t))
-    .slice(0, limite);
+const sinAcento = (s) => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+
+/**
+ * Búsqueda por texto para el explorador del catálogo.
+ *
+ * La v1 era `includes()` del string entero sobre tres campos, y cortaba con
+ * `.slice(limite)` ANTES de ordenar por nada: los resultados eran los primeros
+ * del índice, no los mejores. Y "press banca" no encontraba "Press de banca con
+ * barra", porque esa cadena exacta no existe en ningún nombre.
+ *
+ * Ahora: se parte la consulta en palabras, se exigen todas (AND), y se puntúa.
+ * El puntaje es lo que hace que el movimiento básico aparezca arriba y las
+ * variantes exóticas del dataset abajo.
+ *
+ * @param {string} texto
+ * @param {Object|number} [opciones]  número = límite, por compatibilidad
+ * @param {number} [opciones.limite]
+ * @param {string} [opciones.patron]
+ * @param {string[]} [opciones.equipo]  grupos de equipo
+ * @param {string} [opciones.zona]
+ */
+export function buscar(texto, opciones = {}) {
+  const o = typeof opciones === 'number' ? { limite: opciones } : opciones;
+  const { limite = 60, patron = null, equipo = null, zona = null } = o;
+
+  const base = (_indice || []).filter((e) =>
+    (!patron || e.p === patron)
+    && (!equipo?.length || equipo.includes(e.g))
+    && (!zona || e.z === zona));
+
+  const q = sinAcento(texto).trim();
+  if (!q) {
+    // Sin consulta, el orden tampoco puede ser el del archivo: se muestran los
+    // compuestos y los nombres limpios primero, que es lo que alguien busca
+    // cuando abre el catálogo a mirar.
+    return base
+      .map((e) => ({ e, s: (e.c === 1 ? 10 : 0) - (RESTO_INGLES.test(e.n) ? 8 : 0) - e.n.length / 50 }))
+      .sort((a, b) => b.s - a.s)
+      .slice(0, limite)
+      .map((x) => x.e);
+  }
+
+  const tokens = q.split(/\s+/).filter((t) => t.length > 1 || tokens0(q));
+  const salida = [];
+  for (const e of base) {
+    const nombre = sinAcento(e.n);
+    const ingles = sinAcento(e.en);
+    const musculos = sinAcento(`${e.t} ${(e.s || []).join(' ')}`);
+    const todo = `${nombre} ${ingles} ${musculos}`;
+
+    if (!tokens.every((t) => todo.includes(t))) continue;
+
+    let s = 0;
+    if (nombre.startsWith(q)) s += 100;
+    else if (nombre.includes(q)) s += 60;
+    else if (ingles.includes(q)) s += 40;
+
+    for (const t of tokens) {
+      if (new RegExp(`\\b${escapar(t)}`).test(nombre)) s += 20;
+      else if (nombre.includes(t)) s += 10;
+      else if (ingles.includes(t)) s += 5;
+      else s += 3;
+    }
+
+    // El movimiento canónico del patrón le gana a la variante exótica. Sin
+    // esto, buscar "sentadilla" devolvía primero la sentadilla sissy: existe en
+    // el dataset, pero nadie la está buscando cuando escribe esa palabra.
+    const rango = (BASICOS[e.p] || []).findIndex((re) => re.test(e.en));
+    if (rango >= 0) s += 30 - rango * 4;
+
+    if (e.c === 1) s += 8;                              // compuestos primero
+    if (RESTO_INGLES.test(e.n)) s -= 15;                // nombres a medio traducir
+    s -= e.n.length / 40;                               // a igualdad, el más simple
+
+    salida.push({ e, s });
+  }
+
+  return salida.sort((a, b) => b.s - a.s).slice(0, limite).map((x) => x.e);
+}
+
+// Una consulta de una sola letra no se descarta entera: "z" no busca nada útil,
+// pero descartar todos los tokens dejaría la lista completa como resultado, que
+// es peor que no encontrar nada.
+const tokens0 = (q) => q.length === 1;
+const escapar = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** Zonas presentes en el catálogo, para los filtros del explorador. */
+export function zonas() {
+  return [...new Set((_indice || []).map((e) => e.z).filter(Boolean))].sort();
 }
 
 export function porPatron() {

@@ -59,6 +59,7 @@ function reproyectar() {
       sesiones.set(id, {
         sesionId: id, dia: null, plan: null, brazo: null, contexto: null,
         iniciada: false, terminada: false, saltada: false, motivoSalto: null,
+        descartada: false,
         series: [], duracionMin: null, percepcion: null, ts: 0,
       });
     }
@@ -70,7 +71,11 @@ function reproyectar() {
     switch (e.tipo) {
       case EVENTO.SESION_PROPUESTA: {
         const s = upsert(d.sesionId);
-        s.dia = e.dia; s.plan = d.plan; s.brazo = d.brazo; s.contexto = d.contexto;
+        // Se clona: los eventos que sustituyen un bloque escriben sobre `s.plan`,
+        // y sin la copia esa escritura mutaría el evento original en memoria.
+        s.dia = e.dia;
+        s.plan = d.plan ? structuredClone(d.plan) : null;
+        s.brazo = d.brazo; s.contexto = d.contexto;
         s.disposicion = d.disposicion; s.modo = d.modo; s.ts = e.ts;
         break;
       }
@@ -86,9 +91,30 @@ function reproyectar() {
         s.saltada = true; s.motivoSalto = d.motivo;
         break;
       }
+      // ── v2 ──────────────────────────────────────────────────────────────
+      // Descartar no borra nada: es otro evento. La sesión descartada queda en
+      // el log (se puede auditar cuántas veces se pidió otra propuesta) pero
+      // no cuenta como intento, ni alimenta al bandit, ni toca la adherencia.
+      case EVENTO.SESION_DESCARTADA: upsert(d.sesionId).descartada = true; break;
+      case EVENTO.BLOQUE_SUSTITUIDO: {
+        const s = upsert(d.sesionId);
+        if (s.plan?.bloques) {
+          const i = s.plan.bloques.findIndex((b) => b.hueco === d.hueco);
+          if (i >= 0) s.plan.bloques[i] = d.bloque;
+        }
+        break;
+      }
+      case EVENTO.BLOQUE_AGREGADO: {
+        const s = upsert(d.sesionId);
+        if (s.plan?.bloques) s.plan.bloques.push(d.bloque);
+        break;
+      }
     }
   }
-  const listaSesiones = [...sesiones.values()].sort((a, b) => a.ts - b.ts);
+  const listaSesiones = [...sesiones.values()]
+    .filter((s) => !s.descartada)
+    .sort((a, b) => a.ts - b.ts);
+  const descartadasHoy = [...sesiones.values()].filter((s) => s.descartada && s.dia === hoy).length;
   const hechas = listaSesiones.filter((s) => s.terminada);
 
   // ── Historial por ejercicio: lo que necesita progresion.js ────────────────
@@ -172,6 +198,13 @@ function reproyectar() {
   const ultimosPorHueco = (listaSesiones.filter((s) => s.terminada).pop()?.plan?.bloques || [])
     .map((b) => b.ejercicio?.id || null);
 
+  // ── Conversación con el coach ─────────────────────────────────────────────
+  // Cada turno es un evento. Sin esto la IA arrancaba de cero en cada llamada:
+  // le decías "el hombro" y dos minutos después no sabía de qué hablabas.
+  const conversacion = porTipo(EVENTO.COACH_TURNO).map((e) => ({
+    dia: e.dia, ts: e.ts, quien: e.datos.quien, texto: e.datos.texto,
+  }));
+
   _proy = {
     hoy, perfil, ajustes,
     listaSesiones, hechas, historial, vecesHecho, volumenSemanal,
@@ -179,6 +212,7 @@ function reproyectar() {
     posteriores, intentos, checks, senales, racha,
     adherencia: adherencia4Semanas(intentos, hoy),
     mejorMarca, checkHoy, sesionHoy, habitosHoy, diasSinEntrenar, ultimosPorHueco,
+    conversacion, descartadasHoy,
     totalEventos: _eventos.length,
   };
 }
@@ -228,6 +262,14 @@ export const iniciarSesion = (sesionId) => emitir(EVENTO.SESION_INICIADA, { sesi
 export const registrarSerie = (datos) => emitir(EVENTO.SERIE_REGISTRADA, datos);
 export const terminarSesion = (sesionId, d) => emitir(EVENTO.SESION_TERMINADA, { sesionId, ...d });
 export const saltarSesion = (sesionId, motivo) => emitir(EVENTO.SESION_SALTADA, { sesionId, motivo });
+export const descartarSesion = (sesionId, motivo = 'otra_propuesta') =>
+  emitir(EVENTO.SESION_DESCARTADA, { sesionId, motivo });
+export const sustituirBloque = (sesionId, hueco, bloque) =>
+  emitir(EVENTO.BLOQUE_SUSTITUIDO, { sesionId, hueco, bloque });
+export const agregarBloque = (sesionId, bloque) =>
+  emitir(EVENTO.BLOQUE_AGREGADO, { sesionId, bloque });
+export const registrarTurnoCoach = (quien, texto) =>
+  emitir(EVENTO.COACH_TURNO, { quien, texto });
 export const registrarHabito = (habitoId, valor) => emitir(EVENTO.HABITO_REGISTRADO, { habitoId, valor });
 export const escribirNota = (texto) => emitir(EVENTO.NOTA_ESCRITA, { texto });
 export const cambiarAjuste = (clave, valor) => emitir(EVENTO.AJUSTE_CAMBIADO, { [clave]: valor });

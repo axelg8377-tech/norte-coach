@@ -416,3 +416,74 @@ button { font: inherit; color: inherit; }
 }
 .lista-ej .n { font-size: var(--t-chico); color: var(--texto); }
 .lista-ej .d { font-size: var(--t-micro); color: var(--texto-3); }
+
+/* ═══ v2 ══════════════════════════════════════════════════════════════════
+   El coach al frente, el descanso, el calentamiento y el calendario.
+   Todo sale de tokens.css: acá no hay un solo color crudo. */
+
+/* ─── Coach ───────────────────────────────────────────────────────────── */
+.coach {
+  border-top: 1px solid var(--linea);
+  margin-top: var(--e5);
+  padding-top: var(--e3);
+}
+.coach-cabecera { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: var(--e2); }
+.hilo { display: grid; gap: var(--e2); max-height: 18rem; overflow-y: auto; }
+.turno {
+  font-size: var(--t-chico); line-height: 1.6;
+  padding: var(--e2); border-radius: var(--radio-chico);
+}
+.turno.vos { background: var(--fondo-elevado); color: var(--texto-2); justify-self: end; max-width: 85%; }
+.turno.coach { background: var(--brasa-tenue); color: var(--texto); max-width: 95%; }
+.turno.error { color: var(--alerta); background: transparent; padding-left: 0; }
+.coach-entrada { display: grid; grid-template-columns: 1fr auto; gap: var(--e2); margin-top: var(--e3); }
+.boton.compacto { width: auto; padding: 0 var(--e3); font-size: var(--t-chico); }
+
+/* ─── Descanso entre series ───────────────────────────────────────────── */
+.descanso {
+  border: 1px solid var(--brasa);
+  border-radius: var(--radio);
+  padding: var(--e2) var(--e3);
+  margin-bottom: var(--e3);
+  display: grid; gap: var(--e1);
+}
+.descanso .numero { font-family: var(--fuente-num); font-size: 2rem; line-height: 1; color: var(--brasa); }
+.descanso[data-terminado='true'] { border-color: var(--linea); }
+.descanso[data-terminado='true'] .numero { color: var(--texto-3); font-size: var(--t-sub); }
+
+/* ─── Entrada en calor ────────────────────────────────────────────────── */
+.calentamiento {
+  border-left: 2px solid var(--linea-fuerte);
+  padding-left: var(--e3);
+  margin-bottom: var(--e4);
+}
+
+.enlace {
+  background: none; border: 0; padding: 0; min-height: auto;
+  color: var(--texto-2); font: inherit; font-size: var(--t-chico);
+  text-decoration: underline; text-underline-offset: 3px; cursor: pointer;
+}
+.enlace:active { color: var(--brasa); }
+
+.acciones.secundarias { grid-template-columns: 1fr 1fr; margin-top: var(--e2); }
+.acciones.secundarias .boton { font-size: var(--t-chico); }
+
+/* ─── Catálogo: elegir y agregar ──────────────────────────────────────── */
+.fila-ej { display: grid; grid-template-columns: 1fr auto; gap: var(--e2); align-items: center; border-bottom: 1px solid var(--linea); }
+.fila-ej > button:first-child { border-bottom: 0; }
+.lista-ej button[data-elegido='true'] .n { color: var(--brasa); }
+.lista-ej button[data-elegido='true'] .n::after { content: ' ✓'; }
+.bandeja {
+  position: sticky; bottom: 0;
+  background: var(--fondo);
+  border-top: 1px solid var(--linea);
+  padding: var(--e2) 0 var(--seguro-abajo);
+}
+.bandeja[hidden] { display: none; }
+
+/* ─── Calendario de adherencia ────────────────────────────────────────── */
+.calendario { display: grid; grid-template-columns: repeat(14, 1fr); gap: 3px; }
+.calendario .dia { aspect-ratio: 1; border-radius: 2px; background: var(--fondo-elevado); }
+.calendario .dia[data-estado='hecha'] { background: var(--brasa); }
+.calendario .dia[data-estado='fallada'] { background: var(--linea-fuerte); }
+.calendario .dia[data-estado='hoy'] { box-shadow: inset 0 0 0 1px var(--brasa); }

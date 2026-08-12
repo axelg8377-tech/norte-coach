@@ -8,15 +8,28 @@
  *   con check   → la sesión que el motor decidió, y por qué
  *   en curso    → volver a la sesión
  *   cerrado     → qué pasó hoy + los hábitos
+ *
+ * ─── v2 ─────────────────────────────────────────────────────────────────────
+ * El día dejó de ser inmutable. La v1 miraba `p.sesionHoy` y, si tenía plan,
+ * entraba a la propuesta para siempre: la única salida era registrar un fallo o
+ * borrar el historial entero. Ahora hay tres salidas honestas — otra propuesta,
+ * rehacer el check y armarla a mano — y las tres son eventos, no borrados.
  */
 
 import { h, vaciar, cifra, encabezado, escala, fichas, aviso, señal, hoja } from './componentes.js';
 import * as estado from '../estado.js';
 import { porId } from '../dominio/catalogo.js';
-import { decidir } from '../dominio/motor.js';
+import { decidir, armarManual } from '../dominio/motor.js';
 import { ZONA_DOLOR, GRUPO_EQUIPO, HABITOS, MODO, nuevoId } from '../dominio/modelo.js';
 import { saludoDia } from '../dominio/mensajes.js';
 import { pedirLectura, hayIA } from '../ia/cliente.js';
+import { panelCoach } from './coach.js';
+
+// Restricciones vigentes del día. Viven en memoria y se rehidratan desde la
+// huella del plan: así "otra propuesta" no pierde el "hoy quiero espalda" que
+// pediste hace un minuto.
+let restriccionesHoy = {};
+let forzarCheck = false;
 
 export function render(cont, { ir }) {
   const p = estado.proyeccion();
@@ -26,6 +39,9 @@ export function render(cont, { ir }) {
   if (!p.perfil) return ir('#/inicio');
 
   const s = p.sesionHoy;
+  if (s?.plan?.huella?.restricciones) restriccionesHoy = { ...s.plan.huella.restricciones, ...restriccionesHoy };
+
+  if (forzarCheck) { forzarCheck = false; return check(cont, p, ir); }
   if (s && (s.terminada || s.saltada)) return cerrado(cont, p, ir);
   if (s && s.iniciada) return enCurso(cont, p, ir);
   if (s && s.plan) return propuesta(cont, p, ir, s);
@@ -35,21 +51,25 @@ export function render(cont, { ir }) {
 
 // ─── 1. El check ────────────────────────────────────────────────────────────
 function check(cont, p, ir) {
+  const previo = p.checkHoy;
   const datos = {
-    sueno: null, energia: null, animo: null, dolor: {},
-    minutos: p.ajustes.minutosPorDefecto || 60,
-    equipoHoy: p.perfil.equipo,
+    sueno: previo?.sueno ?? null, energia: previo?.energia ?? null, animo: previo?.animo ?? null,
+    dolor: { ...(previo?.dolor || {}) },
+    minutos: previo?.minutos || p.ajustes.minutosPorDefecto || 60,
+    equipoHoy: previo?.equipoHoy || p.perfil.equipo,
   };
 
-  const botón = h('button.boton', { disabled: true, onClick: guardar }, 'Ver la sesión de hoy');
+  const botón = h('button.boton', { disabled: !previo, onClick: guardar }, 'Ver la sesión de hoy');
   const revisar = () => {
     botón.disabled = !(datos.sueno && datos.energia && datos.animo);
   };
 
   cont.append(
-    h('h1.titulo', '¿Cómo llegaste?'),
+    h('h1.titulo', previo ? 'Contestá de nuevo.' : '¿Cómo llegaste?'),
     h('p.cuerpo', { style: 'margin-top:var(--e2)' },
-      'Veinte segundos. De esto sale el entrenamiento, así que contestá lo que es, no lo que te gustaría.'),
+      previo
+        ? 'Se recalcula la sesión con lo que pongas ahora. El check anterior queda en el registro.'
+        : 'Veinte segundos. De esto sale el entrenamiento, así que contestá lo que es, no lo que te gustaría.'),
     h('div', { style: 'margin-top:var(--e5)' },
       escala({
         etiqueta: 'Sueño', valor: datos.sueno, pistaBaja: 'no dormí', pistaAlta: 'como un tronco',
@@ -90,6 +110,10 @@ function check(cont, p, ir) {
 
   async function guardar() {
     botón.disabled = true;
+    // Rehacer el check invalida la propuesta que salía del anterior.
+    if (p.sesionHoy?.plan && !p.sesionHoy.iniciada) {
+      await estado.descartarSesion(p.sesionHoy.sesionId, 'check_rehecho');
+    }
     await estado.registrarCheck(datos);
     render(cont, { ir });
   }
@@ -102,7 +126,7 @@ function dolorSelector(datos) {
 
   for (const [id, z] of Object.entries(ZONA_DOLOR)) {
     lista.append(h('button.ficha', {
-      type: 'button', 'aria-pressed': 'false',
+      type: 'button', 'aria-pressed': String(id in (datos.dolor || {})),
       onClick: (ev) => {
         const activo = ev.currentTarget.getAttribute('aria-pressed') === 'true';
         ev.currentTarget.setAttribute('aria-pressed', String(!activo));
@@ -129,6 +153,7 @@ function dolorSelector(datos) {
   }
 
   cont.append(lista, detalle);
+  pintarDetalle();
   return cont;
 }
 
@@ -149,6 +174,8 @@ async function calcularYProponer(cont, p, ir) {
       diasSinEntrenar: p.diasSinEntrenar ?? 0,
     },
     ultimosPorHueco: p.ultimosPorHueco,
+    restricciones: restriccionesHoy,
+    intento: p.descartadasHoy || 0,
     hoy: p.hoy,
   });
 
@@ -170,6 +197,19 @@ function propuesta(cont, p, ir, sesion) {
   const plan = sesion.plan;
   const recuperacion = plan.modo === MODO.RECUPERAR;
 
+  const rehacer = async (restricciones) => {
+    restriccionesHoy = {
+      ...restriccionesHoy,
+      ...(restricciones || {}),
+      excluirPatrones: [
+        ...(restriccionesHoy.excluirPatrones || []),
+        ...((restricciones && restricciones.excluirPatrones) || []),
+      ],
+    };
+    await estado.descartarSesion(sesion.sesionId, restricciones ? 'renegociada' : 'otra_propuesta');
+    render(cont, { ir });
+  };
+
   cont.append(
     h('div.aparece',
       h('h1.titulo', plan.mensaje.titulo),
@@ -179,7 +219,10 @@ function propuesta(cont, p, ir, sesion) {
         cifra(plan.minutosEstimados, 'min', recuperacion ? 'frio' : 'brasa'),
         h('p.chico', { style: 'margin-top:var(--e2)' },
           [etiquetaModo(plan.modo), `${plan.bloques.length} ejercicios`,
-            `disposición ${plan.disposicion}`].join(' · '))),
+            `disposición ${plan.disposicion}`,
+            plan.origen === 'manual' ? 'armada por vos' : null].filter(Boolean).join(' · '))),
+
+      bloqueCalentamiento(plan, ir),
 
       h('div.bloques', plan.bloques.map((b) => bloque(b, ir))),
 
@@ -188,14 +231,39 @@ function propuesta(cont, p, ir, sesion) {
       hayIA() ? h('button.boton.plano', { onClick: (ev) => ampliar(ev, plan, p) },
         'Pedirle al coach que lo explique mejor') : null,
 
+      panelCoach({ p, plan, alRearmar: rehacer }),
+
       h('div.acciones',
         h('button.boton', {
           clase: recuperacion ? 'boton frio' : 'boton',
           onClick: async () => { await estado.iniciarSesion(sesion.sesionId); ir('#/sesion'); },
-        }, recuperacion ? 'Hacer la recuperación' : 'Empezar'),
+        }, recuperacion ? 'Hacer la recuperación' : 'Empezar')),
+
+      h('div.acciones.secundarias',
+        h('button.boton.fantasma', { onClick: () => rehacer(null) }, 'Otra propuesta'),
+        h('button.boton.fantasma', {
+          onClick: () => { forzarCheck = true; render(cont, { ir }); },
+        }, 'Rehacer el check'),
+        h('button.boton.fantasma', { onClick: () => ir('#/catalogo/armar') }, 'Armarla yo')),
+
+      h('div.acciones',
         h('button.boton.plano', { onClick: () => noPuedo(cont, p, ir, sesion) }, 'Hoy no puedo')),
     ),
   );
+}
+
+function bloqueCalentamiento(plan, ir) {
+  const c = plan.calentamiento || [];
+  if (!c.length) return null;
+  const minutos = Math.round(c.reduce((s, x) => s + x.segundos, 0) / 60);
+  return h('div.calentamiento',
+    h('span.micro', { style: 'display:block;margin-bottom:var(--e2)' },
+      `Entrada en calor · ${minutos} min`),
+    ...c.map((x) => h('div.entre', { style: 'padding:var(--e1) 0' },
+      h('button.enlace', { onClick: () => ir(`#/ejercicio/${x.ejercicio.id}`) }, x.ejercicio.n),
+      h('span.chico', `${x.segundos}s`))),
+    h('p.micro', { style: 'color:var(--texto-3);margin-top:var(--e2)' },
+      'Antes de esto, dos o tres minutos de caminata o bici. Los minutos que ves arriba son solo la movilidad.'));
 }
 
 function etiquetaModo(m) {
@@ -248,7 +316,9 @@ async function ampliar(ev, plan, p) {
     btn.replaceWith(h('div.porque', h('p', texto)));
   } catch (e) {
     btn.disabled = false;
-    btn.textContent = 'No se pudo. Reintentar';
+    btn.textContent = e.message.startsWith('cifras_inventadas')
+      ? 'El coach citó números que no están en tus datos. No lo muestro.'
+      : 'No se pudo. Reintentar';
   }
 }
 
@@ -273,6 +343,14 @@ function cerrado(cont, p, ir) {
     h('p.cuerpo', s.terminada
       ? `${s.duracionMin ? `${s.duracionMin} minutos. ` : ''}Mañana se recalcula todo con esto adentro.`
       : 'Queda registrado. No es una falta moral: es un dato que uso para pedirte las cosas mejor.'),
+
+    s.saltada ? h('div.acciones',
+      h('button.boton.fantasma', {
+        onClick: async () => {
+          await estado.descartarSesion(s.sesionId, 'me_arrepenti');
+          render(cont, { ir });
+        },
+      }, 'Me arrepentí, quiero entrenar')) : null,
 
     p.senales.length ? h('div', { style: 'margin-top:var(--e5)' },
       h('span.micro', { style: 'display:block;margin-bottom:var(--e3)' }, 'Lo que estoy viendo'),
@@ -312,4 +390,30 @@ function listaHabitos(p) {
     cont.replaceWith(nuevo);
   }
   return cont;
+}
+
+/**
+ * Punto de entrada del armado manual. Lo llama el catálogo con los ejercicios
+ * elegidos. El motor sigue prescribiendo: acá solo se le pasa la lista.
+ */
+export async function crearSesionManual(ejercicioIds) {
+  const p = estado.proyeccion();
+  if (p.sesionHoy?.plan && !p.sesionHoy.iniciada) {
+    await estado.descartarSesion(p.sesionHoy.sesionId, 'armada_a_mano');
+  }
+  const plan = armarManual({
+    ejercicioIds,
+    check: p.checkHoy || {},
+    perfil: p.perfil,
+    historial: p.historial,
+    vecesHecho: p.vecesHecho,
+    volumenSemanal: p.volumenSemanal,
+    hoy: p.hoy,
+  });
+  await estado.proponerSesion({
+    sesionId: nuevoId('s'),
+    plan, brazo: null, contexto: null,
+    disposicion: plan.disposicion, modo: plan.modo,
+  });
+  return plan;
 }
